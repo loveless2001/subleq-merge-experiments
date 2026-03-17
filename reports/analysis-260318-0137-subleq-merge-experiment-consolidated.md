@@ -114,8 +114,7 @@ Effective rank (Shannon entropy of normalized singular values) measures how many
 | Phase 2 checkpoints | `checkpoints/independent_*` |
 | Eval logs | `runs/eval/*.log` |
 | Cross-skill eval | `runs/eval/cross_skill_all.log` |
-| Plan | `/home/lenovo/projects/plans/260317-0412-subleq-merge-experiment/` |
-| Phase 1 report | `plans/reports/analysis-260317-1351-subleq-merge-phase1-results.md` |
+| Phase 1 report | `reports/analysis-260317-1351-subleq-merge-phase1-results.md` |
 
 ## Code
 
