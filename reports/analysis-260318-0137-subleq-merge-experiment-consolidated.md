@@ -1,7 +1,7 @@
 # SUBLEQ Transformer Merge Experiment — Consolidated Report
 
 **Date:** 2026-03-18
-**Workspace:** `/home/lenovo/projects/subleq-merge-experiments`
+**Workspace:** `~/projects/subleq-merge-experiments`
 **Base:** anadim/subleq-transformer Round 2 (6L, 256d, 8H, 1024ff, ~5M params)
 **Agents:** Claude (experiment design, merge/alignment code, analysis), Codex (scaffold, training, pipeline execution)
 
