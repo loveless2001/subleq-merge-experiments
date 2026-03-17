@@ -1,7 +1,7 @@
 # SUBLEQ Merge Experiment — Phase 1 Results
 
 **Date:** 2026-03-17
-**Workspace:** `/home/lenovo/projects/subleq-merge-experiments`
+**Workspace:** `~/projects/subleq-merge-experiments`
 **Base:** anadim/subleq-transformer Round 2 (6L, 256d, 8H, ~5M params)
 
 ## Experiment Setup
