@@ -78,4 +78,3 @@ Tested whether merged models execute programs requiring both skill sets in one t
 
 - Eval logs: `subleq-merge-experiments/runs/eval/*.log`
 - Checkpoints: `subleq-merge-experiments/checkpoints/merged_*`
-- Plan: `/home/lenovo/projects/plans/260317-0412-subleq-merge-experiment/`
