@@ -1,0 +1,11 @@
+# Keep the scaffolded directories in git, but ignore generated experiment files.
+checkpoints/*
+!checkpoints/.gitkeep
+
+data/*
+!data/.gitkeep
+
+runs/*
+!runs/.gitkeep
+
+.venv/

@@ -1,0 +1,193 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{xcolor}
+
+\title{Merging Independently Trained SUBLEQ Transformers:\\Alignment, Recovery, and Capacity Analysis}
+\author{Collaborative Experiment}
+\date{March 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We investigate whether two independently trained SUBLEQ transformers---each specialized on different program families---can be merged into a single model that retains both skill sets. Using a one-instruction Turing-complete computer (SUBLEQ) as a controlled testbed, we show that: (1)~shared-ancestor merging works trivially across multiple methods; (2)~independent-initialization merging fails catastrophically under naive weight averaging; (3)~permutation alignment (Git Re-Basin) partially recovers some program families but not general execution; and (4)~alignment followed by a small recovery fine-tune (6K steps, 7.5\% of full training cost) restores a strong general executor that exceeds both specialists, given a small additional recovery budget once the specialists already exist. SVD effective rank analysis confirms merged models utilize ${\sim}8$--$9\%$ more of their parameter space than individual specialists, with the key distinction between broken and working merges being feature coherence rather than capacity.
+\end{abstract}
+
+\section{Introduction}
+
+Model merging---combining the weights of separately trained neural networks into a single model---has emerged as a practical technique for composing specialized capabilities without retraining from scratch. While methods like task arithmetic, TIES-Merging, and SLERP have shown promise when models share a common ancestor, the harder case of merging independently initialized models remains challenging due to the permutation symmetry of neural network weight spaces.
+
+We use the SUBLEQ transformer~\cite{anadim2025subleq} as a controlled experimental testbed. SUBLEQ (\textbf{SU}btract and \textbf{B}ranch if \textbf{L}ess than or \textbf{EQ}ual to zero) is a one-instruction ISA that is Turing complete. A 4.9M-parameter transformer trained on single-step SUBLEQ execution generalizes to multi-step programs (Fibonacci, multiplication, division) never seen during training.
+
+This setting offers several advantages for studying model merging:
+\begin{itemize}
+    \item Success is binary and unambiguous (correct program output or not)
+    \item Skills are clearly separable (arithmetic program families)
+    \item The model is small enough for rapid iteration (${\sim}2$ hours to train)
+    \item A comprehensive test suite already exists
+\end{itemize}
+
+\section{Experimental Setup}
+
+\subsection{Architecture}
+Pre-LN encoder-only transformer: 6 layers, $d_\text{model}{=}256$, 8 attention heads, $d_\text{ff}{=}1024$, ${\sim}4.9$M parameters. Bidirectional attention (no causal mask). Token + position + type embeddings. 32 memory cells, 8-bit signed values ($[-128, 127]$). Sequence length 33 (1 PC byte + 32 memory bytes).
+
+\subsection{Training Data}
+60\% random single-step SUBLEQ transitions (shared across all profiles) and 40\% program execution traces, split by specialist profile:
+\begin{itemize}
+    \item \textbf{Specialist A:} 25\% negate, 25\% addition, 25\% countdown, 25\% random programs
+    \item \textbf{Specialist B:} 30\% multiply, 25\% random (1--4 instructions), 45\% random (4--8 instructions)
+\end{itemize}
+
+\subsection{Merge Methods}
+\begin{enumerate}
+    \item \textbf{Naive average:} $\theta_\text{merged} = (\theta_A + \theta_B) / 2$
+    \item \textbf{Task arithmetic:} $\theta_\text{merged} = \theta_\text{ancestor} + \lambda(\delta_A + \delta_B)$
+    \item \textbf{TIES-Merging:} Trim, elect sign, disjoint merge on task vectors
+    \item \textbf{SLERP:} Spherical linear interpolation at $t{=}0.5$
+    \item \textbf{Git Re-Basin:} Weight matching via Hungarian algorithm on FFN hidden units and attention heads, followed by averaging or SLERP
+\end{enumerate}
+
+\section{Phase 1: Shared-Ancestor Merge}
+
+Train ancestor checkpoint (40K steps, broad distribution), then fine-tune two specialists (25K steps each) from the same ancestor.
+
+\begin{table}[h]
+\centering
+\caption{Phase 1 results. All values are correct/total counts except SS\% (single-step accuracy).}
+\label{tab:phase1}
+\begin{tabular}{@{}lrrrrrrr@{}}
+\toprule
+Model & SS\% & Neg & Add & Count & Mul & Fib & Rand \\
+ & & /201 & /300 & /20 & /141 & /6 & /100 \\
+\midrule
+Ancestor 40K & 100 & 201 & 300 & 20 & 141 & \textbf{1} & 97 \\
+Specialist A & 100 & 201 & 300 & 20 & 141 & 6 & 97 \\
+Specialist B & 100 & 197 & 300 & 20 & 141 & 4 & 96 \\
+\midrule
+Naive Avg & 100 & 201 & 300 & 20 & 141 & \textbf{6} & 97 \\
+TIES ($k{=}0.2$) & 100 & 201 & 300 & 20 & 141 & \textbf{6} & 97 \\
+SLERP ($t{=}0.5$) & 100 & 201 & 300 & 20 & 141 & \textbf{6} & 97 \\
+Task Arith ($\lambda{=}1$) & 100 & 201 & 300 & 20 & 141 & 5 & 97 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Three of four merge methods achieved perfect scores on all structured tests. Notably, merging recovered Fibonacci performance (ancestor: 1/6 $\to$ merged: 6/6), suggesting complementary learned representations combine constructively. Cross-skill composition programs (e.g., multiply-then-add) were preserved but not uniquely created by merging, as the ancestor already performed strongly on these cases.
+
+\textbf{Limitation:} Shared ancestor + short fine-tuning kept specialists close in weight space. This represents the easiest merge scenario.
+
+\section{Phase 2: Independent-Initialization Merge}
+
+Train Model~X (seed~42, specialist\_a, 80K steps) and Model~Y (seed~123, specialist\_b, 80K steps) from scratch with different random initializations.
+
+\begin{table}[h]
+\centering
+\caption{Phase 2 results. Independent initialization merge with alignment and recovery.}
+\label{tab:phase2}
+\begin{tabular}{@{}lrrrrrrr@{}}
+\toprule
+Model & SS\% & Neg & Add & Count & Mul & Fib & Rand \\
+\midrule
+Indep X (seed 42) & 99.9 & 201 & 300 & 20 & 141 & 1/6 & 96 \\
+Indep Y (seed 123) & 99.9 & 188 & 300 & 20 & 141 & 0/6 & 97 \\
+\midrule
+Naive avg & \textbf{0.0} & 1 & 58 & 0 & 0 & 0 & 0 \\
+Aligned avg & \textbf{0.0} & 1 & 153 & 13 & 0 & 0 & 0 \\
+Aligned SLERP & \textbf{0.0} & 1 & 300 & 19 & 0 & 0 & 0 \\
+\midrule
+\textbf{+ 6K recovery} & \textbf{100} & \textbf{201} & \textbf{300} & \textbf{20} & \textbf{141} & \textbf{6/6} & \textbf{97} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Key Findings}
+
+\begin{enumerate}
+    \item \textbf{Naive merge catastrophically fails.} 0\% single-step accuracy confirms that independent initializations break weight-space averaging due to permutation symmetry.
+
+    \item \textbf{Permutation alignment partially recovers some behaviors.} Git Re-Basin weight matching on FFN hidden units and attention heads improved addition (58$\to$300 with SLERP) and countdown (0$\to$19), but single-step accuracy, multiplication, and Fibonacci remained broken. The residual stream ($d_\text{model}$) misalignment---constrained by skip connections---is the primary bottleneck.
+
+    \item \textbf{SLERP outperforms linear averaging after alignment.} Geometric interpolation on aligned weights massively outperformed linear mixing, suggesting alignment found the right direction but linear combination is too aggressive.
+
+    \item \textbf{Recovery fine-tuning restores full capability.} Starting from the aligned SLERP checkpoint, 6K steps of mixed-data fine-tuning (7.5\% of the 80K full training budget) restored: 100\% single-step accuracy, 201/201 negate, 300/300 addition, 141/141 multiplication, and 6/6 Fibonacci. The recovered model exceeds both individual specialists.
+\end{enumerate}
+
+\subsection{Central Result}
+
+Independent-init models are not directly mergeable. Permutation alignment alone is insufficient for full recovery. But alignment followed by a small recovery fine-tune (${\sim}6$K steps vs 80K from scratch) restores a strong general executor---provided the specialists already exist. The recovery cost is 7.5\% of training from scratch.
+
+\section{Capacity Analysis: SVD Effective Rank}
+
+We compute effective rank via Shannon entropy of normalized singular values: $r_\text{eff} = \exp\left(-\sum_i p_i \log p_i\right)$ where $p_i = \sigma_i / \sum_j \sigma_j$. This measures how many weight matrix dimensions actively encode features.
+
+\begin{table}[h]
+\centering
+\caption{Average effective rank across layers for key weight matrices.}
+\label{tab:svd}
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+Model & FFN $W_1$ & FFN $W_2$ & QKV & Attn Out & Tok Emb & Out Head \\
+\midrule
+Specialist A & 187.9 & 192.4 & 191.8 & 159.8 & 138.6 & 137.4 \\
+Specialist B & 188.5 & 193.8 & 192.2 & 159.2 & 138.6 & 139.5 \\
+Naive Merge & \textbf{204.9} & \textbf{209.3} & \textbf{205.8} & \textbf{170.9} & 145.6 & 147.8 \\
+Recovered & 200.2 & 204.3 & 202.0 & 167.9 & 143.1 & 146.5 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Merging increases effective rank by ${\sim}8$--$9\%$, confirming merged models utilize more of their parameter space. Critically, broken and working merged models have similar rank---the distinction is \emph{coherence}, not capacity. Recovery slightly reduced rank (204.9$\to$200.2), suggesting it pruned conflicting features while retaining coherent ones.
+
+\section{Discussion}
+
+Our results suggest a practical pipeline for combining independently trained specialist models:
+
+\begin{enumerate}
+    \item Train specialists independently on their respective domains
+    \item Apply permutation alignment (Git Re-Basin) to reduce weight-space distance
+    \item Merge using SLERP (preferred over linear averaging)
+    \item Fine-tune briefly on mixed data to restore coherence
+\end{enumerate}
+
+The key insight is that alignment gets the merged model ``close enough'' to a good solution that cheap fine-tuning can finish the job. Without alignment, the merged model would require substantially more fine-tuning---effectively retraining from scratch.
+
+\subsection{Limitations}
+
+\begin{itemize}
+    \item Same architecture throughout---no cross-architecture merging
+    \item Small model (4.9M params)---scaling behavior unknown
+    \item Recovery fine-tuning uses the same training recipe---a specialized recovery objective might be more efficient
+    \item Git Re-Basin alignment only covers FFN and attention head permutations, not the residual stream
+\end{itemize}
+
+\section{Future Work}
+
+\begin{itemize}
+    \item \textbf{Stronger alignment:} Activation matching or SVD subspace alignment to address the residual stream bottleneck, potentially eliminating recovery fine-tuning
+    \item \textbf{Cross-architecture merging:} Models with different widths or depths
+    \item \textbf{Scaling:} Larger models and longer programs
+    \item \textbf{Recovery cost curves:} Systematic measurement of fine-tuning budget vs.\ recovered performance
+\end{itemize}
+
+\begin{thebibliography}{9}
+\bibitem{anadim2025subleq}
+anadim. \textit{SUBLEQ Transformer: A transformer that executes a one-instruction Turing-complete computer.} GitHub, 2025. \url{https://github.com/anadim/subleq-transformer}
+
+\bibitem{ainsworth2023rebasin}
+Ainsworth, S.K., Hayase, J., and Srinivasa, S. \textit{Git Re-Basin: Merging Models modulo Permutation Symmetries.} ICLR, 2023.
+
+\bibitem{ilharco2023editing}
+Ilharco, G., et al. \textit{Editing Models with Task Arithmetic.} ICLR, 2023.
+
+\bibitem{yadav2023ties}
+Yadav, P., et al. \textit{TIES-Merging: Resolving Interference When Merging Models.} NeurIPS, 2023.
+\end{thebibliography}
+
+\end{document}
